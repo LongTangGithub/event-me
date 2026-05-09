@@ -4,6 +4,8 @@ import { getUser } from './users.js';
 
 const router = Router();
 
+const ALLOWED_COLS = new Set(['title', 'description', 'image_url', 'date', 'host_id']);
+
 const joinHost = (event) => {
   const host = getUser(event.host_id);
   return { ...event, host };
@@ -50,16 +52,14 @@ router.patch('/:id', (req, res) => {
   const eventId = parseInt(req.params.id);
   const patch = req.body;
 
-  const updateCol = db.prepare(`
-    UPDATE events SET @col = @val WHERE id = @eventId
-  `);
   const updateEvent = db.transaction((patch) => {
     for (const [col, val] of Object.entries(patch)) {
-      updateCol.run({ col, val, eventId });
+      if (!ALLOWED_COLS.has(col)) continue;
+      db.prepare(`UPDATE events SET ${col} = ? WHERE id = ?`).run(val, eventId);
     }
   });
 
-  updateEvent(Object.entries(patch));
+  updateEvent(patch);
   const updated = getEvent(eventId);
   res.json(updated);
 });
@@ -79,17 +79,15 @@ router.post('/:id/rsvp', (req, res) => {
   const eventId = parseInt(req.params.id);
   const { name, email } = req.body;
 
-  const getRSVP = db.prepare(`SELECT * FROM rsvps WHERE (event_id = ${eventId} AND email = '${email}')`);
+  const getRSVP = db.prepare(`SELECT * FROM rsvps WHERE event_id = @eventId AND email = @email`);
   const insertRSVP = db.prepare(`INSERT INTO rsvps VALUES (@eventId, @name, @email)`);
 
-  let [rsvp] = getRSVP.all({ eventId, email });
+  let rsvp = getRSVP.get({ eventId, email });
   if (rsvp) {
-    // This email has already RSVPed
     res.status(200).json({ rsvp });
   } else {
-    // New RSVP
     insertRSVP.run({ name, email, eventId });
-    rsvp = getRSVP.run({ eventId, email });
+    rsvp = getRSVP.get({ eventId, email });
     res.status(201).json({ rsvp });
   }
 });
